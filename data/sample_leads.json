@@ -1,0 +1,89 @@
+[
+  {
+    "source": "google_maps",
+    "scraped_at": "2026-03-10T12:00:00Z",
+    "company": {
+      "name": "Acme Concrete Solutions",
+      "website": "https://acme-concrete.com",
+      "phone": "+15551234567",
+      "address": "123 Main St",
+      "city": "Cleveland",
+      "state": "OH",
+      "zip": "44101",
+      "country": "US",
+      "founded_year": 2015,
+      "employee_count": "10-50",
+      "revenue_estimate": "$2M-$5M",
+      "business_status": "active",
+      "industry": "Concrete Contractors",
+      "specializations": ["epoxy floors", "polished concrete", "surface prep"],
+      "google_rating": 4.8,
+      "google_reviews_count": 127,
+      "website_has_epoxy_mention": true,
+      "website_conversion_signals": ["contact form", "get a quote"],
+      "social_presence": {
+        "facebook": "https://facebook.com/acmeconcrete",
+        "instagram": "https://instagram.com/acmeconcrete",
+        "linkedin": "https://linkedin.com/company/acmeconcrete"
+      }
+    },
+    "primary_contact": {
+      "name": "John Smith",
+      "title": "Owner",
+      "phone": "+15551234567",
+      "email": "john@acme-concrete.com",
+      "linkedin_url": "https://linkedin.com/in/johnsmith"
+    }
+  },
+  {
+    "source": "yelp",
+    "scraped_at": "2026-03-10T10:30:00Z",
+    "company": {
+      "name": "Metro Epoxy Floors",
+      "website": "https://metro-epoxy.com",
+      "phone": "+15559876543",
+      "address": "456 Oak Ave",
+      "city": "Columbus",
+      "state": "OH",
+      "zip": "43215",
+      "country": "US",
+      "business_status": "active",
+      "industry": "Epoxy Flooring",
+      "specializations": ["metallic epoxy", "garage floors", "commercial flooring"],
+      "google_rating": 4.6,
+      "google_reviews_count": 89,
+      "website_has_epoxy_mention": true,
+      "social_presence": {
+        "facebook": "https://facebook.com/metroepoxy",
+        "instagram": "https://instagram.com/metroepoxy"
+      }
+    },
+    "primary_contact": {
+      "name": "Sarah Jones",
+      "title": "Owner/Operator",
+      "phone": "+15559876543",
+      "email": "sarah@metro-epoxy.com"
+    }
+  },
+  {
+    "source": "yellowpages",
+    "scraped_at": "2026-03-09T15:45:00Z",
+    "company": {
+      "name": "ABC Plumbing Services",
+      "phone": "+15553456789",
+      "address": "789 Pine Rd",
+      "city": "Cincinnati",
+      "state": "OH",
+      "zip": "45201",
+      "country": "US",
+      "business_status": "active",
+      "industry": "Plumbing",
+      "specializations": ["water heaters", "pipe repair", "drain cleaning"]
+    },
+    "primary_contact": {
+      "name": "Tom Williams",
+      "phone": "+15553456789",
+      "email": "tom@abcplumbing.com"
+    }
+  }
+]
