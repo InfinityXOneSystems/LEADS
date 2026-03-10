@@ -19,9 +19,13 @@ class ValidationPipeline:
         blocked_reasons = []
 
         # Company name validation
-        if not lead.company.name or len(lead.company.name.strip()) < 2:
+        company_name = (lead.company.name or "").strip()
+        if len(company_name) == 0:
             issues.append("company_name: required, min 2 characters")
             blocked_reasons.append("missing_company_name")
+        elif len(company_name) < 2:
+            issues.append("company_name: min 2 characters")
+            blocked_reasons.append("invalid_company_name")
         elif len(lead.company.name) > 255:
             issues.append("company_name: exceeds 255 characters")
 

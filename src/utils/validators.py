@@ -71,8 +71,7 @@ class PhoneValidator:
         e164 = cls.to_e164(phone)
         if not e164:
             return None
-        digits = re.sub(r"\D", "", e164)
-        return f"tel:+{digits}"
+        return f"tel:{e164}"
 
 
 class EmailValidator:
