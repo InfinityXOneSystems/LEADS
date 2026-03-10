@@ -1,0 +1,25 @@
+{
+  "version": "v1.0",
+  "description": "Scoring weights for lead quality evaluation",
+  "weights": {
+    "legitimacy": 0.20,
+    "relevance": 0.25,
+    "opportunity": 0.15,
+    "activity": 0.15,
+    "accessibility": 0.15,
+    "engagement": 0.10
+  },
+  "thresholds": {
+    "hot": 75,
+    "warm": 50,
+    "cold": 0
+  },
+  "factor_descriptions": {
+    "legitimacy": "Business legitimacy - Is company real & active?",
+    "relevance": "Epoxy relevance - Do they work with epoxy/concrete/flooring?",
+    "opportunity": "Market opportunity - Revenue size, employees, growth",
+    "activity": "Recent activity - Reviews, posts, website updates",
+    "accessibility": "Decision maker access - Can we reach owner/decision maker?",
+    "engagement": "Social engagement - Active on Facebook, Instagram, LinkedIn?"
+  }
+}
