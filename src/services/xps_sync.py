@@ -7,12 +7,14 @@ Authentication
 --------------
 Two authentication strategies are supported (GitHub App is preferred):
 
-1. **GitHub App** (recommended) – Supply ``app_id``, ``private_key``, and
-   ``installation_id``.  The service generates a short-lived installation
-   access token on every sync call using :class:`GitHubAppAuth`.
+1. **GitHub App** (recommended) – Supply ``app_id`` and ``private_key``.
+   The ``installation_id`` is optional: when omitted the service auto-discovers
+   the installation by querying ``GET /orgs/{org}/installation``, which works
+   for Apps installed org-wide (the common case for InfinityXOneSystems).
 
 2. **PAT fallback** – Supply a ``github_token`` (Personal Access Token).
-   Used when GitHub App credentials are not configured.
+   Used only when GitHub App credentials are not configured or when all App
+   auth paths fail.
 """
 import json
 from datetime import datetime, timezone
@@ -61,31 +63,49 @@ class XPSSyncService:
     def _resolve_token(self) -> str:
         """Return the best available authentication token.
 
-        Prefers a GitHub App installation token when the App is fully
-        configured; falls back to the plain ``github_token`` (PAT).
+        Resolution order:
+        1. GitHub App installation token using the explicit ``installation_id``
+           when it is configured.
+        2. GitHub App installation token after auto-discovering the installation
+           ID from the org (``GET /orgs/{org}/installation``).  This works for
+           App installations scoped to an entire organization.
+        3. Plain ``github_token`` (PAT) fallback when neither App path succeeds.
 
-        Returns an empty string if neither is available (callers should
-        handle the no-auth case explicitly).
+        Returns an empty string if no auth is available.
         """
-        if GitHubAppAuth.is_configured(self.app_id, self.private_key):
-            if not self.installation_id:
+        if not GitHubAppAuth.is_configured(self.app_id, self.private_key):
+            return self.github_token
+
+        auth = GitHubAppAuth(app_id=self.app_id, private_key=self.private_key)
+
+        # Resolve the installation ID – use explicit value or auto-discover.
+        installation_id = self.installation_id
+        if not installation_id:
+            org = self.xps_system_repo.split("/")[0] if "/" in self.xps_system_repo else ""
+            if org:
+                try:
+                    installation_id = auth.get_org_installation_id(org)
+                except (RuntimeError, ValueError) as exc:
+                    logger.error(
+                        f"GitHub App installation ID auto-discovery failed "
+                        f"for org '{org}': {exc} – falling back to PAT"
+                    )
+                    return self.github_token
+            else:
                 logger.warning(
-                    "GitHub App credentials present but GH_APP_INSTALLATION_ID "
-                    "is not set – falling back to PAT"
+                    "GitHub App credentials present but installation_id is not "
+                    "set and org cannot be determined – falling back to PAT"
                 )
                 return self.github_token
-            try:
-                auth = GitHubAppAuth(
-                    app_id=self.app_id, private_key=self.private_key
-                )
-                return auth.get_installation_token(self.installation_id)
-            except (RuntimeError, ValueError) as exc:
-                logger.error(
-                    f"GitHub App token generation failed: {exc} – "
-                    "falling back to PAT"
-                )
-                return self.github_token
-        return self.github_token
+
+        try:
+            return auth.get_installation_token(installation_id)
+        except (RuntimeError, ValueError) as exc:
+            logger.error(
+                f"GitHub App token generation failed: {exc} – "
+                "falling back to PAT"
+            )
+            return self.github_token
 
     # ------------------------------------------------------------------
     # Public API

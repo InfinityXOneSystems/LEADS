@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     # GitHub App authentication (preferred over XPS_GITHUB_TOKEN)
     gh_app_id: str = ""
     gh_app_private_key: str = ""        # PEM key content (multi-line, use \n in .env)
+    # Optional: leave blank to auto-discover from the org installation.
     gh_app_installation_id: str = ""
 
     # Scoring thresholds

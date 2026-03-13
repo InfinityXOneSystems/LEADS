@@ -421,6 +421,41 @@ class TestGitHubAppAuth:
             with pytest.raises(RuntimeError, match="token exchange failed"):
                 auth.get_installation_token(_TEST_INSTALLATION_ID)
 
+    def test_get_org_installation_id_success(self):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": 12345678, "account": {"login": "InfinityXOneSystems"}}
+
+        auth = GitHubAppAuth(app_id=_TEST_APP_ID, private_key=_TEST_RSA_PEM)
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.get.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            installation_id = auth.get_org_installation_id("InfinityXOneSystems")
+
+        assert installation_id == "12345678"
+
+    def test_get_org_installation_id_raises_on_failure(self):
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+
+        auth = GitHubAppAuth(app_id=_TEST_APP_ID, private_key=_TEST_RSA_PEM)
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.get.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(RuntimeError, match="org installation lookup failed"):
+                auth.get_org_installation_id("InfinityXOneSystems")
+
 
 # ---------------------------------------------------------------------------
 # XPSSyncService GitHub App integration tests
@@ -463,14 +498,51 @@ class TestXPSSyncServiceWithGitHubApp:
 
         assert token == "pat_fallback_token"
 
-    def test_resolve_token_falls_back_to_pat_when_no_installation_id(self):
+    def test_resolve_token_auto_discovers_installation_id_when_not_set(self):
+        """When installation_id is blank, _resolve_token discovers it from the org."""
+        service = XPSSyncService(
+            app_id=_TEST_APP_ID,
+            private_key=_TEST_RSA_PEM,
+            installation_id="",  # not set – should auto-discover
+            xps_system_repo="InfinityXOneSystems/LEADS",
+        )
+        # First GET: org installation lookup → returns id
+        discovery_response = MagicMock()
+        discovery_response.status_code = 200
+        discovery_response.json.return_value = {"id": 99998888}
+
+        # Second POST: installation token exchange → returns token
+        token_response = MagicMock()
+        token_response.status_code = 201
+        token_response.json.return_value = {"token": "ghs_auto_discovered"}
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.get.return_value = discovery_response
+            mock_client.post.return_value = token_response
+            mock_client_cls.return_value = mock_client
+
+            token = service._resolve_token()
+
+        assert token == "ghs_auto_discovered"
+
+    def test_resolve_token_falls_back_to_pat_when_discovery_fails(self):
+        """PAT is used only when App is configured but all discovery paths fail."""
         service = XPSSyncService(
             github_token="pat_token",
             app_id=_TEST_APP_ID,
             private_key=_TEST_RSA_PEM,
-            installation_id="",  # missing
+            installation_id="",  # not set
+            xps_system_repo="InfinityXOneSystems/LEADS",
         )
-        token = service._resolve_token()
+        with patch(
+            "src.services.xps_sync.GitHubAppAuth.get_org_installation_id",
+            side_effect=RuntimeError("org not found"),
+        ):
+            token = service._resolve_token()
+
         assert token == "pat_token"
 
     def test_resolve_token_returns_pat_when_app_not_configured(self):

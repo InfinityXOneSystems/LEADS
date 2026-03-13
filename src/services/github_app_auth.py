@@ -97,9 +97,8 @@ class GitHubAppAuth:
         Parameters
         ----------
         installation_id:
-            The numeric installation ID.  Find it on
-            ``https://api.github.com/app/installations`` (authenticated as
-            the App) or in the GitHub webhook payload.
+            The numeric installation ID.  Use :meth:`get_org_installation_id`
+            to discover it automatically for org-wide installations.
 
         Returns
         -------
@@ -143,6 +142,60 @@ class GitHubAppAuth:
         except Exception as exc:
             raise RuntimeError(
                 f"GitHub App token exchange error: {exc}"
+            ) from exc
+
+    def get_org_installation_id(self, org: str) -> str:
+        """Look up the installation ID for an organization using the App JWT.
+
+        Because the App is installed org-wide this call succeeds without
+        knowing the installation ID in advance.  The ID returned can then be
+        passed to :meth:`get_installation_token`.
+
+        Parameters
+        ----------
+        org:
+            GitHub organization login (e.g. ``"InfinityXOneSystems"``).
+
+        Returns
+        -------
+        str
+            The numeric installation ID as a string.
+
+        Raises
+        ------
+        RuntimeError
+            If GitHub returns a non-2xx response or the response does not
+            contain an ``id`` field.
+        """
+        app_jwt = self.generate_jwt()
+        url = f"https://api.github.com/orgs/{org}/installation"
+        headers = {
+            "Authorization": f"Bearer {app_jwt}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                response = client.get(url, headers=headers)
+
+            if response.status_code == 200:
+                installation_id = str(response.json()["id"])
+                logger.info(
+                    f"Discovered GitHub App installation ID for org '{org}': "
+                    f"{installation_id}"
+                )
+                return installation_id
+
+            raise RuntimeError(
+                f"GitHub App org installation lookup failed for '{org}': "
+                f"HTTP {response.status_code} – {response.text[:200]}"
+            )
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"GitHub App org installation lookup error: {exc}"
             ) from exc
 
     @staticmethod
