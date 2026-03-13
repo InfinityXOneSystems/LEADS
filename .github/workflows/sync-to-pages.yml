@@ -1,0 +1,166 @@
+name: Sync to GitHub Pages & XPS Frontend
+
+# This workflow is the automated bridge between the LEADS normalization
+# pipeline and the two XPS consumer systems:
+#   1. GitHub Pages (this repo's gh-pages branch)
+#   2. XPS Intelligence Frontend (InfinityXOneSystems/frontend-system)
+#
+# Authentication uses a GitHub App (GH_APP_ID + GH_APP_PRIVATE_KEY secrets),
+# which produces short-lived installation tokens and does not require
+# a long-lived Personal Access Token.
+#
+# Trigger conditions:
+#   - Push to main (new data or code changes land)
+#   - Daily at 02:00 UTC (keep Pages fresh even without code commits)
+#   - Manual run with optional custom input file path
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "data/**"
+      - "src/**"
+      - "scripts/export_leads.py"
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      input_file:
+        description: "Path to raw leads JSON (relative to repo root)"
+        required: false
+        default: "data/sample_leads.json"
+      dispatch_frontend:
+        description: "Dispatch update event to XPS Frontend repo"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: write   # needed to push to gh-pages branch
+  pages: write
+  id-token: write
+
+jobs:
+  export-and-deploy:
+    name: Export leads & deploy to GitHub Pages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------------
+      # GitHub App authentication
+      # Generates a short-lived installation token scoped to the repos
+      # the App is installed on (this repo + frontend-system).
+      # ----------------------------------------------------------------
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1.11.6
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          # Scope the token to both repos the workflow touches
+          owner: ${{ github.repository_owner }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Export normalized lead data
+        env:
+          # Pass the App-generated token to the Python export script so it
+          # can dispatch the repository_dispatch event to frontend-system.
+          # The script prefers GH_APP_* env vars; the token produced by the
+          # action above is already a valid short-lived installation token so
+          # we expose it via XPS_GITHUB_TOKEN as a direct bearer token.
+          XPS_GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          XPS_SYSTEM_REPO: ${{ vars.XPS_SYSTEM_REPO || 'InfinityXOneSystems/LEADS' }}
+          XPS_FRONTEND_REPO: ${{ vars.XPS_FRONTEND_REPO || 'InfinityXOneSystems/frontend-system' }}
+          XPS_PAGES_BRANCH: ${{ vars.XPS_PAGES_BRANCH || 'gh-pages' }}
+        run: |
+          INPUT_FILE="${{ github.event.inputs.input_file || 'data/sample_leads.json' }}"
+          DISPATCH_FLAG=""
+          if [ "${{ github.event.inputs.dispatch_frontend || 'true' }}" = "true" ]; then
+            DISPATCH_FLAG="--dispatch"
+          fi
+          python scripts/export_leads.py --input "$INPUT_FILE" --outdir docs/api $DISPATCH_FLAG
+
+      - name: Generate GitHub Pages index
+        run: |
+          cat > docs/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>XPS Intelligence – Lead Data API</title>
+            <style>
+              body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; }
+              h1 { color: #1a1a2e; }
+              a { color: #0066cc; text-decoration: none; }
+              a:hover { text-decoration: underline; }
+              table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+              th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #ddd; }
+              th { background: #f4f6f8; font-weight: 600; }
+              .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+              .hot  { background: #ffe0e0; color: #c00; }
+              .warm { background: #fff3cd; color: #856404; }
+              .cold { background: #d1ecf1; color: #0c5460; }
+            </style>
+          </head>
+          <body>
+            <h1>🔥 XPS Intelligence – Lead Data API</h1>
+            <p>
+              Normalized lead data exported from
+              <a href="https://github.com/InfinityXOneSystems/LEADS">InfinityXOneSystems/LEADS</a>.
+              All data is automatically refreshed on every push to <code>main</code> and daily at 02:00 UTC.
+            </p>
+            <h2>Available Endpoints</h2>
+            <table>
+              <thead>
+                <tr><th>File</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><a href="api/meta.json">api/meta.json</a></td><td>Export metadata &amp; totals</td></tr>
+                <tr><td><a href="api/leads.json">api/leads.json</a></td><td>All normalized leads</td></tr>
+                <tr><td><a href="api/hot.json">api/hot.json</a></td><td><span class="badge hot">🔥 Hot</span> leads (score ≥ 75)</td></tr>
+                <tr><td><a href="api/warm.json">api/warm.json</a></td><td><span class="badge warm">🌡️ Warm</span> leads (score 50–74)</td></tr>
+                <tr><td><a href="api/cold.json">api/cold.json</a></td><td><span class="badge cold">❄️ Cold</span> leads (score &lt; 50)</td></tr>
+              </tbody>
+            </table>
+            <p style="margin-top:40px;color:#888;font-size:0.85em;">
+              Auto-generated by <a href="https://github.com/InfinityXOneSystems/LEADS/blob/main/.github/workflows/sync-to-pages.yml">sync-to-pages.yml</a>
+            </p>
+          </body>
+          </html>
+          EOF
+
+      - name: Deploy to GitHub Pages (gh-pages branch)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          # Use the App-generated token so the commit is attributed to the
+          # GitHub App rather than to a personal account.
+          github_token: ${{ steps.app-token.outputs.token }}
+          publish_dir: ./docs
+          publish_branch: gh-pages
+          commit_message: "chore: sync normalized lead data [skip ci]"
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"

@@ -43,6 +43,18 @@ class Settings(BaseSettings):
     # Slack
     slack_webhook_url: str = ""
 
+    # XPS Intelligence sync
+    xps_github_token: str = ""
+    xps_system_repo: str = "InfinityXOneSystems/LEADS"
+    xps_frontend_repo: str = "InfinityXOneSystems/frontend-system"
+    xps_pages_branch: str = "gh-pages"
+
+    # GitHub App authentication (preferred over XPS_GITHUB_TOKEN)
+    gh_app_id: str = ""
+    gh_app_private_key: str = ""        # PEM key content (multi-line, use \n in .env)
+    # Optional: leave blank to auto-discover from the org installation.
+    gh_app_installation_id: str = ""
+
     # Scoring thresholds
     hot_score_threshold: int = 75
     warm_score_threshold: int = 50

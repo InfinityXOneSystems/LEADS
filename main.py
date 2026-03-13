@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import router
 from src.api.webhooks import webhook_router
+from src.api.sync import sync_router
 from src.utils.logger import get_logger
 from src.config import settings
 
@@ -27,6 +28,7 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(webhook_router)
+app.include_router(sync_router)
 
 
 @app.get("/")
