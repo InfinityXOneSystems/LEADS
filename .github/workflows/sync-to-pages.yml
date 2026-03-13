@@ -5,6 +5,10 @@ name: Sync to GitHub Pages & XPS Frontend
 #   1. GitHub Pages (this repo's gh-pages branch)
 #   2. XPS Intelligence Frontend (InfinityXOneSystems/frontend-system)
 #
+# Authentication uses a GitHub App (GH_APP_ID + GH_APP_PRIVATE_KEY secrets),
+# which produces short-lived installation tokens and does not require
+# a long-lived Personal Access Token.
+#
 # Trigger conditions:
 #   - Push to main (new data or code changes land)
 #   - Daily at 02:00 UTC (keep Pages fresh even without code commits)
@@ -48,6 +52,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ----------------------------------------------------------------
+      # GitHub App authentication
+      # Generates a short-lived installation token scoped to the repos
+      # the App is installed on (this repo + frontend-system).
+      # ----------------------------------------------------------------
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1.11.6
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          # Scope the token to both repos the workflow touches
+          owner: ${{ github.repository_owner }}
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -68,7 +86,12 @@ jobs:
 
       - name: Export normalized lead data
         env:
-          XPS_GITHUB_TOKEN: ${{ secrets.XPS_GITHUB_TOKEN }}
+          # Pass the App-generated token to the Python export script so it
+          # can dispatch the repository_dispatch event to frontend-system.
+          # The script prefers GH_APP_* env vars; the token produced by the
+          # action above is already a valid short-lived installation token so
+          # we expose it via XPS_GITHUB_TOKEN as a direct bearer token.
+          XPS_GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           XPS_SYSTEM_REPO: ${{ vars.XPS_SYSTEM_REPO || 'InfinityXOneSystems/LEADS' }}
           XPS_FRONTEND_REPO: ${{ vars.XPS_FRONTEND_REPO || 'InfinityXOneSystems/frontend-system' }}
           XPS_PAGES_BRANCH: ${{ vars.XPS_PAGES_BRANCH || 'gh-pages' }}
@@ -133,7 +156,9 @@ jobs:
       - name: Deploy to GitHub Pages (gh-pages branch)
         uses: peaceiris/actions-gh-pages@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Use the App-generated token so the commit is attributed to the
+          # GitHub App rather than to a personal account.
+          github_token: ${{ steps.app-token.outputs.token }}
           publish_dir: ./docs
           publish_branch: gh-pages
           commit_message: "chore: sync normalized lead data [skip ci]"

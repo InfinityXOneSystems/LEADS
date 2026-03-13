@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     xps_frontend_repo: str = "InfinityXOneSystems/frontend-system"
     xps_pages_branch: str = "gh-pages"
 
+    # GitHub App authentication (preferred over XPS_GITHUB_TOKEN)
+    gh_app_id: str = ""
+    gh_app_private_key: str = ""        # PEM key content (multi-line, use \n in .env)
+    gh_app_installation_id: str = ""
+
     # Scoring thresholds
     hot_score_threshold: int = 75
     warm_score_threshold: int = 50

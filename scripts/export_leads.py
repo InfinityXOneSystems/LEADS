@@ -113,6 +113,9 @@ def export_leads(input_path: str, outdir: str, dispatch: bool) -> None:
             "XPS_FRONTEND_REPO", "InfinityXOneSystems/frontend-system"
         ),
         pages_branch=os.getenv("XPS_PAGES_BRANCH", "gh-pages"),
+        app_id=os.getenv("GH_APP_ID", ""),
+        private_key=os.getenv("GH_APP_PRIVATE_KEY", ""),
+        installation_id=os.getenv("GH_APP_INSTALLATION_ID", ""),
     )
     payload = sync.build_export_payload(processed)
 

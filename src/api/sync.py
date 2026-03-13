@@ -29,6 +29,9 @@ _sync_service = XPSSyncService(
     xps_system_repo=settings.xps_system_repo,
     xps_frontend_repo=settings.xps_frontend_repo,
     pages_branch=settings.xps_pages_branch,
+    app_id=settings.gh_app_id,
+    private_key=settings.gh_app_private_key,
+    installation_id=settings.gh_app_installation_id,
 )
 
 # In-memory lead store shared with the sync router.

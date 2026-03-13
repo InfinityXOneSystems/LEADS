@@ -1,10 +1,14 @@
 """Tests for XPS Intelligence sync service and sync API endpoints."""
 import json
+import time
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
 
+from src.services.github_app_auth import GitHubAppAuth
 from src.services.xps_sync import XPSSyncService, EXPORT_SCHEMA_VERSION
 from src.pipelines.ingestion import IngestionPipeline
 from src.pipelines.validation import ValidationPipeline
@@ -13,6 +17,24 @@ from src.pipelines.scoring import ScoringPipeline
 from src.pipelines.categorization import CategorizationPipeline
 from src.models.lead import FrontendFormat
 from src.utils.formatters import LeadFormatter
+
+
+# ---------------------------------------------------------------------------
+# Shared test RSA key (generated once for the module)
+# ---------------------------------------------------------------------------
+
+def _generate_test_rsa_pem() -> str:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+
+_TEST_RSA_PEM = _generate_test_rsa_pem()
+_TEST_APP_ID = "123456"
+_TEST_INSTALLATION_ID = "78901234"
 
 
 # ---------------------------------------------------------------------------
@@ -281,3 +303,211 @@ class TestSyncRouter:
     def test_export_invalid_category_rejected(self, sync_client):
         response = sync_client.get("/api/v1/sync/export?category=unknown")
         assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# GitHubAppAuth unit tests
+# ---------------------------------------------------------------------------
+
+class TestGitHubAppAuth:
+    def test_constructor_rejects_empty_app_id(self):
+        with pytest.raises(ValueError, match="App ID"):
+            GitHubAppAuth(app_id="", private_key=_TEST_RSA_PEM)
+
+    def test_constructor_rejects_invalid_private_key(self):
+        with pytest.raises(ValueError, match="PEM"):
+            GitHubAppAuth(app_id=_TEST_APP_ID, private_key="not-a-pem-key")
+
+    def test_generate_jwt_returns_string(self):
+        auth = GitHubAppAuth(app_id=_TEST_APP_ID, private_key=_TEST_RSA_PEM)
+        token = auth.generate_jwt()
+        assert isinstance(token, str)
+        # A JWT always has three dot-separated segments
+        assert token.count(".") == 2
+
+    def test_generate_jwt_uses_app_id_as_issuer(self):
+        from jose import jwt as jose_jwt
+        from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+        from cryptography.hazmat.primitives import serialization as _ser
+
+        # Decode with the matching public key to verify claims
+        priv = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = priv.private_bytes(
+            encoding=_ser.Encoding.PEM,
+            format=_ser.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=_ser.NoEncryption(),
+        ).decode()
+        pub_pem = priv.public_key().public_bytes(
+            encoding=_ser.Encoding.PEM,
+            format=_ser.PublicFormat.SubjectPublicKeyInfo,
+        ).decode()
+
+        auth = GitHubAppAuth(app_id="999", private_key=pem)
+        token = auth.generate_jwt()
+
+        claims = jose_jwt.decode(token, pub_pem, algorithms=["RS256"])
+        assert claims["iss"] == "999"
+        assert claims["exp"] > int(time.time())
+
+    def test_generate_jwt_iat_within_clock_drift_tolerance(self):
+        from jose import jwt as jose_jwt
+        from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+        from cryptography.hazmat.primitives import serialization as _ser
+        from src.services.github_app_auth import _JWT_ISSUED_AT_SKEW
+
+        priv = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = priv.private_bytes(
+            encoding=_ser.Encoding.PEM,
+            format=_ser.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=_ser.NoEncryption(),
+        ).decode()
+        pub_pem = priv.public_key().public_bytes(
+            encoding=_ser.Encoding.PEM,
+            format=_ser.PublicFormat.SubjectPublicKeyInfo,
+        ).decode()
+
+        auth = GitHubAppAuth(app_id="1", private_key=pem)
+        token = auth.generate_jwt()
+        claims = jose_jwt.decode(token, pub_pem, algorithms=["RS256"])
+        # iat should be at most _JWT_ISSUED_AT_SKEW seconds in the past
+        # Allow a small margin (5 s) for test execution time
+        assert claims["iat"] <= int(time.time())
+        assert claims["iat"] >= int(time.time()) - _JWT_ISSUED_AT_SKEW - 5
+
+    def test_is_configured_true_with_valid_key(self):
+        assert GitHubAppAuth.is_configured(_TEST_APP_ID, _TEST_RSA_PEM) is True
+
+    def test_is_configured_false_when_app_id_empty(self):
+        assert GitHubAppAuth.is_configured("", _TEST_RSA_PEM) is False
+
+    def test_is_configured_false_when_private_key_empty(self):
+        assert GitHubAppAuth.is_configured(_TEST_APP_ID, "") is False
+
+    def test_is_configured_false_when_private_key_not_pem(self):
+        assert GitHubAppAuth.is_configured(_TEST_APP_ID, "notapem") is False
+
+    def test_get_installation_token_success(self):
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"token": "ghs_test_installation_token"}
+
+        auth = GitHubAppAuth(app_id=_TEST_APP_ID, private_key=_TEST_RSA_PEM)
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.post.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            token = auth.get_installation_token(_TEST_INSTALLATION_ID)
+
+        assert token == "ghs_test_installation_token"
+
+    def test_get_installation_token_raises_on_failure(self):
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+
+        auth = GitHubAppAuth(app_id=_TEST_APP_ID, private_key=_TEST_RSA_PEM)
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.post.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(RuntimeError, match="token exchange failed"):
+                auth.get_installation_token(_TEST_INSTALLATION_ID)
+
+
+# ---------------------------------------------------------------------------
+# XPSSyncService GitHub App integration tests
+# ---------------------------------------------------------------------------
+
+class TestXPSSyncServiceWithGitHubApp:
+    def test_resolve_token_uses_app_when_configured(self):
+        service = XPSSyncService(
+            app_id=_TEST_APP_ID,
+            private_key=_TEST_RSA_PEM,
+            installation_id=_TEST_INSTALLATION_ID,
+        )
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"token": "ghs_from_app"}
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.post.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            token = service._resolve_token()
+
+        assert token == "ghs_from_app"
+
+    def test_resolve_token_falls_back_to_pat_when_app_token_fails(self):
+        service = XPSSyncService(
+            github_token="pat_fallback_token",
+            app_id=_TEST_APP_ID,
+            private_key=_TEST_RSA_PEM,
+            installation_id=_TEST_INSTALLATION_ID,
+        )
+        with patch(
+            "src.services.xps_sync.GitHubAppAuth.get_installation_token",
+            side_effect=RuntimeError("API error"),
+        ):
+            token = service._resolve_token()
+
+        assert token == "pat_fallback_token"
+
+    def test_resolve_token_falls_back_to_pat_when_no_installation_id(self):
+        service = XPSSyncService(
+            github_token="pat_token",
+            app_id=_TEST_APP_ID,
+            private_key=_TEST_RSA_PEM,
+            installation_id="",  # missing
+        )
+        token = service._resolve_token()
+        assert token == "pat_token"
+
+    def test_resolve_token_returns_pat_when_app_not_configured(self):
+        service = XPSSyncService(github_token="only_a_pat")
+        assert service._resolve_token() == "only_a_pat"
+
+    def test_resolve_token_empty_when_nothing_configured(self):
+        service = XPSSyncService()
+        assert service._resolve_token() == ""
+
+    def test_dispatch_uses_app_token(self):
+        service = XPSSyncService(
+            app_id=_TEST_APP_ID,
+            private_key=_TEST_RSA_PEM,
+            installation_id=_TEST_INSTALLATION_ID,
+        )
+        payload = service.build_export_payload([])
+
+        # First call: installation token exchange (201)
+        token_response = MagicMock()
+        token_response.status_code = 201
+        token_response.json.return_value = {"token": "ghs_dispatch_token"}
+
+        # Second call: repository_dispatch (204)
+        dispatch_response = MagicMock()
+        dispatch_response.status_code = 204
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.post.side_effect = [token_response, dispatch_response]
+            mock_client_cls.return_value = mock_client
+
+            result = service.dispatch_frontend_update(payload)
+
+        assert result["success"] is True
+        # Verify the dispatch call used the App token as Bearer
+        dispatch_call_headers = mock_client.post.call_args_list[1][1]["headers"]
+        assert dispatch_call_headers["Authorization"] == "Bearer ghs_dispatch_token"

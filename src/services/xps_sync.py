@@ -2,6 +2,17 @@
 
 Exports normalized lead data as structured JSON for GitHub Pages and
 dispatches update events to the XPS Intelligence Frontend repo.
+
+Authentication
+--------------
+Two authentication strategies are supported (GitHub App is preferred):
+
+1. **GitHub App** (recommended) – Supply ``app_id``, ``private_key``, and
+   ``installation_id``.  The service generates a short-lived installation
+   access token on every sync call using :class:`GitHubAppAuth`.
+
+2. **PAT fallback** – Supply a ``github_token`` (Personal Access Token).
+   Used when GitHub App credentials are not configured.
 """
 import json
 from datetime import datetime, timezone
@@ -9,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from .github_app_auth import GitHubAppAuth
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -26,14 +38,54 @@ class XPSSyncService:
         xps_system_repo: str = "InfinityXOneSystems/LEADS",
         xps_frontend_repo: str = "InfinityXOneSystems/frontend-system",
         pages_branch: str = "gh-pages",
+        # GitHub App credentials (preferred over PAT)
+        app_id: str = "",
+        private_key: str = "",
+        installation_id: str = "",
     ):
         self.github_token = github_token
         self.xps_system_repo = xps_system_repo
         self.xps_frontend_repo = xps_frontend_repo
         self.pages_branch = pages_branch
+        self.app_id = app_id
+        self.private_key = private_key
+        self.installation_id = installation_id
         self._last_sync_at: Optional[datetime] = None
         self._last_sync_status: str = "never"
         self._last_sync_counts: Dict[str, int] = {}
+
+    # ------------------------------------------------------------------
+    # Token resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_token(self) -> str:
+        """Return the best available authentication token.
+
+        Prefers a GitHub App installation token when the App is fully
+        configured; falls back to the plain ``github_token`` (PAT).
+
+        Returns an empty string if neither is available (callers should
+        handle the no-auth case explicitly).
+        """
+        if GitHubAppAuth.is_configured(self.app_id, self.private_key):
+            if not self.installation_id:
+                logger.warning(
+                    "GitHub App credentials present but GH_APP_INSTALLATION_ID "
+                    "is not set – falling back to PAT"
+                )
+                return self.github_token
+            try:
+                auth = GitHubAppAuth(
+                    app_id=self.app_id, private_key=self.private_key
+                )
+                return auth.get_installation_token(self.installation_id)
+            except (RuntimeError, ValueError) as exc:
+                logger.error(
+                    f"GitHub App token generation failed: {exc} – "
+                    "falling back to PAT"
+                )
+                return self.github_token
+        return self.github_token
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,14 +126,19 @@ class XPSSyncService:
 
         The frontend CI/CD workflow listens for the ``leads-updated`` event type
         and rebuilds/redeploys with the latest data automatically.
+
+        Authentication uses the GitHub App when configured; falls back to PAT.
         """
-        if not self.github_token:
-            logger.warning("XPS_GITHUB_TOKEN not set – skipping frontend dispatch")
+        token = self._resolve_token()
+        if not token:
+            logger.warning(
+                "No GitHub auth configured (App or PAT) – skipping frontend dispatch"
+            )
             return {"success": False, "reason": "no_token"}
 
         url = f"https://api.github.com/repos/{self.xps_frontend_repo}/dispatches"
         headers = {
-            "Authorization": f"Bearer {self.github_token}",
+            "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
