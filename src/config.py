@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     # Slack
     slack_webhook_url: str = ""
 
+    # XPS Intelligence sync
+    xps_github_token: str = ""
+    xps_system_repo: str = "InfinityXOneSystems/LEADS"
+    xps_frontend_repo: str = "InfinityXOneSystems/frontend-system"
+    xps_pages_branch: str = "gh-pages"
+
     # Scoring thresholds
     hot_score_threshold: int = 75
     warm_score_threshold: int = 50
